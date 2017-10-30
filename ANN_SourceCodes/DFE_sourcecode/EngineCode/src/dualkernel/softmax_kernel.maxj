@@ -1,0 +1,106 @@
+/**	==================================	Main Description:
+*						the math here is the main key to addressing the right signal.
+*						output = exp(in)./sum(exp(in))
+*	Designed By:		Yogev Dotan, Dor Rosenblum
+*	Revision History:	Date		Ver Num		Change
+						1/10/2016	0.1			creation
+*	====================================	*/
+
+package dualkernel;
+
+import com.maxeler.maxcompiler.v2.kernelcompiler.Kernel;
+import com.maxeler.maxcompiler.v2.kernelcompiler.KernelParameters;
+import com.maxeler.maxcompiler.v2.kernelcompiler.stdlib.KernelMath;
+import com.maxeler.maxcompiler.v2.kernelcompiler.types.base.DFEVar;
+import com.maxeler.maxcompiler.v2.kernelcompiler.types.composite.DFEVector;
+import com.maxeler.maxcompiler.v2.kernelcompiler.types.composite.DFEVectorType;
+
+class softmax_kernel extends Kernel {
+	private static int exponent 		= global_header.exponent;
+	private static int significand 		= global_header.significand;
+	softmax_kernel(
+	KernelParameters parameters,
+		int SIZE	// layer's vector size
+) {
+		super(parameters);
+
+//		KernelConfiguration y = getKernelConfig();
+//		//y.optimization.setTriAddsEnabled(true);
+//		y.optimization.setOptimizationTechnique(KernelConfiguration.OptimizationOptions.OptimizationTechnique.SPEED);
+
+
+		// define inputs and outputs type
+		DFEVectorType<DFEVar> 	NetsType =
+			new DFEVectorType<DFEVar>( dfeFloat(exponent, significand),		SIZE);
+
+
+		// define inputs to module:
+		DFEVector<DFEVar> 	ann_final_result		=	io.input("ann_final_result", 	NetsType);
+		DFEVector<DFEVar> 	softmax_out				=	io.output("softmax_out", 		NetsType);
+
+		DFEVector<DFEVar> 	exp_ann_final_result 	= NetsType.newInstance(this);
+
+		// Local Params:
+		final int OPERANDS_NUM	 	= 2;	// core add "+" is done by 2 input at a time
+		final int PIPELINE_RANK		= (int) Math.ceil(Math.log(SIZE)/Math.log(OPERANDS_NUM));	// round down to int LOG base OPERANDS_NUMBER of SIZE
+		final int PIPELINE_MAX_ROW_UNITS= (int)Math.pow(OPERANDS_NUM, PIPELINE_RANK);
+		final int NEUTERAL_OPERAND	= 0;	// 0+x=x
+		DFEVar neuteral_operand_value = constant.var(dfeFloat(exponent, significand), NEUTERAL_OPERAND);
+
+
+
+		DFEVectorType<DFEVar> connection_matrix_Type =
+			new DFEVectorType<DFEVar>(dfeFloat(exponent, significand), ((PIPELINE_RANK+1)*PIPELINE_MAX_ROW_UNITS));
+		DFEVector<DFEVar> connection_matrix		=	connection_matrix_Type.newInstance(this);		// the "connection matrix" made to instruct the java compiler to connect the DFEVar units
+
+		int	current_rank;
+		int current_unit;
+
+		// exp on all inputs:
+		for (int i = 0; i < SIZE; i++) {
+			exp_ann_final_result[i]	<==	KernelMath.exp(ann_final_result[i]) ;
+		}
+		// Connect exp bus to connection_matrix:
+		for (int i = 0; i < PIPELINE_MAX_ROW_UNITS; i++) {
+			connection_matrix[(PIPELINE_RANK)*(PIPELINE_MAX_ROW_UNITS)+i]	<==	(i<SIZE)? 	exp_ann_final_result[i]	:	neuteral_operand_value;
+		}
+
+
+
+
+		// connect units between matix
+		for (current_rank = PIPELINE_RANK; current_rank > 0; current_rank--) {
+				for (current_unit = 1; current_unit <= (int)Math.pow(OPERANDS_NUM, current_rank-1); current_unit++) {
+					connection_matrix[(current_rank-1)*(PIPELINE_MAX_ROW_UNITS)+current_unit-1]		<==	function_core	(	connection_matrix[(current_rank)*(PIPELINE_MAX_ROW_UNITS)+(current_unit-1)*OPERANDS_NUM+0],
+																															connection_matrix[(current_rank)*(PIPELINE_MAX_ROW_UNITS)+(current_unit-1)*OPERANDS_NUM+1]);
+					}
+		}
+
+
+
+	// connect output result to connection_matrix:
+		DFEVar	sum_result		=	connection_matrix[0];
+
+	// softmax final calc:
+		for (int i=0; i<SIZE; i++) {
+			// Input
+			softmax_out[i]	<==	(exp_ann_final_result[i] / sum_result);
+		}
+
+
+
+
+	}
+
+	private DFEVar	function_core(DFEVar	a, 	DFEVar b) {
+		// This is the Core Function Unit.
+		// Note that inputs and outputs are java int for "connection matrix" java drawing
+		// so lets create a DFEVar registers in between the "connection matrix"
+
+		optimization.pushPipeliningFactor(1);
+		DFEVar	result		=	a+b;				// the result
+		optimization.popPipeliningFactor();
+		//optimization.pipeline(result);					// we will insert a register for the pipeline
+		return	result;
+		}
+}

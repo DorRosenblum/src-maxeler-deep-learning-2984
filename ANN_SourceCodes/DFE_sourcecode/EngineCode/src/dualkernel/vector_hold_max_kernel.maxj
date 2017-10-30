@@ -1,0 +1,96 @@
+/**	==================================	Main Description:
+*	Description:		loop-unrolling implementation of Max seek of each element in input vector into a single output entry
+*	Designed By:		Yogev Dotan, Dor Rosenblum
+*	Revision History:	Date		Ver Num		Change
+						1/10/2016	0.1			original
+*	====================================	*/
+
+package dualkernel;
+
+import com.maxeler.maxcompiler.v2.kernelcompiler.Kernel;
+import com.maxeler.maxcompiler.v2.kernelcompiler.KernelParameters;
+import com.maxeler.maxcompiler.v2.kernelcompiler.types.base.DFEVar;
+import com.maxeler.maxcompiler.v2.kernelcompiler.types.composite.DFEVector;
+import com.maxeler.maxcompiler.v2.kernelcompiler.types.composite.DFEVectorType;
+
+class vector_hold_max_kernel extends Kernel {
+	private static int exponent 	= global_header.exponent;
+	private static int significand 	= global_header.significand;
+	vector_hold_max_kernel(KernelParameters parameters,
+			int SIZE	// layer's vector size
+) {
+		super(parameters);
+
+
+		// define inputs and outputs type
+		DFEVectorType<DFEVar> 	NetsType =
+			new DFEVectorType<DFEVar>( dfeFloat(exponent, significand),		SIZE);
+
+
+		// define inputs to module:
+		DFEVector<DFEVar> 	ann_final_result		=	io.input("ann_final_result", 		NetsType);
+		DFEVector<DFEVar> 	binary_onehot_output	=	io.output("binary_onehot_output", 	NetsType);
+
+
+		// Local Params:
+		final int OPERANDS_NUM	 	= 2;	// core add "+" is done by 2 input at a time
+		final int PIPELINE_RANK		= (int) Math.ceil(Math.log(SIZE)/Math.log(OPERANDS_NUM));	// round down to int LOG base OPERANDS_NUMBER of SIZE
+		final int PIPELINE_MAX_ROW_UNITS= (int)Math.pow(OPERANDS_NUM, PIPELINE_RANK);
+		final int NEUTERAL_OPERAND	= 0;	// 0+x=x
+		DFEVar neuteral_operand_value = constant.var(dfeFloat(exponent, significand), NEUTERAL_OPERAND);
+
+
+
+		DFEVectorType<DFEVar> connection_matrix_Type =
+			new DFEVectorType<DFEVar>(dfeFloat(exponent, significand), ((PIPELINE_RANK+1)*PIPELINE_MAX_ROW_UNITS));
+		DFEVector<DFEVar> connection_matrix		=	connection_matrix_Type.newInstance(this);		// the "connection matrix" made to instruct the java compiler to connect the DFEVar units
+
+		int	current_rank;
+		int current_unit;
+
+		// Connect input bus to connection_matrix:
+		for (int i = 0; i < PIPELINE_MAX_ROW_UNITS; i++) {
+			connection_matrix[(PIPELINE_RANK)*(PIPELINE_MAX_ROW_UNITS)+i]	<==	(i<SIZE)? 	ann_final_result[i]	:	neuteral_operand_value;
+		}
+
+
+		// connect units between matix
+		for (current_rank = PIPELINE_RANK; current_rank > 0; current_rank--) {
+				for (current_unit = 1; current_unit <= (int)Math.pow(OPERANDS_NUM, current_rank-1); current_unit++) {
+					connection_matrix[(current_rank-1)*(PIPELINE_MAX_ROW_UNITS)+current_unit-1]		<==	function_core	(	connection_matrix[(current_rank)*(PIPELINE_MAX_ROW_UNITS)+(current_unit-1)*OPERANDS_NUM+0],
+																															connection_matrix[(current_rank)*(PIPELINE_MAX_ROW_UNITS)+(current_unit-1)*OPERANDS_NUM+1]);
+					}
+		}
+
+
+	//Output
+	// connect output result to connection_matrix:
+		DFEVar	finale_result		=	connection_matrix[0];
+
+	// based on the max elm, assigen a binary "1" to the appropriate index
+		for ( int i = 0; i < SIZE; i++){
+			if (finale_result == ann_final_result[i]){
+				binary_onehot_output[i]		<== constant.var(dfeFloat(exponent, significand), 1);
+			}else{
+			}
+				binary_onehot_output[i]		<== constant.var(dfeFloat(exponent, significand), 0);
+		}
+
+		//Output
+		io.output(	"max_value",finale_result,	dfeFloat(exponent, significand));
+
+
+	}
+
+	private DFEVar	function_core(DFEVar	a, 	DFEVar b) {
+		// This is the Core Function Unit.
+		// Note that inputs and outputs are java int for "connection matrix" java drawing
+		// so lets create a DFEVar registers in between the "connection matrix"
+
+		optimization.pushPipeliningFactor(1);
+		DFEVar	result		=	(a>=b)? a : b;				// the max result
+		optimization.popPipeliningFactor();
+		//optimization.pipeline(result);					// we will insert a register for the pipeline
+		return	result;
+		}
+}

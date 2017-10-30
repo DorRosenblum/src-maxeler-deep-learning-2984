@@ -1,0 +1,128 @@
+/**	==================================	Main Description:
+*	Description:		The calculation of each neuron's activation function
+*	Designed By:		Yogev Dotan, Dor Rosenblum
+*	Revision History:	Date		Ver Num		Change
+*	====================================	*/
+
+package dualkernel;
+
+
+import com.maxeler.maxcompiler.v2.kernelcompiler.Kernel;
+import com.maxeler.maxcompiler.v2.kernelcompiler.KernelParameters;
+import com.maxeler.maxcompiler.v2.kernelcompiler.stdlib.KernelMath;
+import com.maxeler.maxcompiler.v2.kernelcompiler.types.base.DFEVar;
+import com.maxeler.maxcompiler.v2.kernelcompiler.types.composite.DFEVector;
+import com.maxeler.maxcompiler.v2.kernelcompiler.types.composite.DFEVectorType;
+
+class neuron_activation_function extends Kernel {
+	private static int exponent = global_header.exponent;
+	private static int significand = global_header.significand;
+	neuron_activation_function(KernelParameters parameters,
+		String	NAME,	// instance name
+		int 	M		// M is the number of layer's neurons
+	) {
+
+		super(parameters);
+
+		DFEVectorType<DFEVar> 	InputNetsType =
+			new DFEVectorType<DFEVar>( dfeFloat(exponent, significand),		M);
+		DFEVectorType<DFEVar> 	activation_outputNetsType =
+			new DFEVectorType<DFEVar>( dfeFloat(exponent, significand),		M);
+
+		// define activation_outputs to module:
+		DFEVector<DFEVar> 	input_activation_net		=	io.input("input_activation_net", 		InputNetsType);
+		// activation_output
+		DFEVector<DFEVar> 	activation_output			=	io.output("activation_output", activation_outputNetsType);
+
+		if (global_header.en_debug_print) debug.simPrintf("======> %s \n" ,NAME);
+		if (global_header.en_debug_print) debug.simPrintf("\n with params: M=%d \n",  M);
+
+		for (int m=0; m<M; m++) {
+			// Input
+
+			DFEVar exp_arg 	= dfeInt(exponent+significand).newInstance(this);//dfeFloat(exponent, significand).newInstance(this);
+			DFEVar exp_res 	= dfeFloat(exponent, significand).newInstance(this);
+			DFEVar denom 	= dfeFloat(exponent, significand).newInstance(this);
+			exp_arg			=	(-input_activation_net[m]).cast(dfeInt(exponent+significand));
+			exp_res			=	(KernelMath.exp(exp_arg,dfeFloat(exponent, significand))).cast(dfeFloat(exponent, significand));
+			denom			=	(constant.var(dfeFloat(exponent, significand), 1.0) + exp_res).cast(dfeFloat(exponent, significand));
+
+			activation_output[m]	<==	((constant.var(dfeFloat(exponent, significand), 1.0))/(denom)).cast(dfeFloat(exponent, significand));;
+//			DFEVar isPose 	= (input_activation_net[m] >= 0);
+//			activation_output[m]	<==	isPose 	? input_activation_net[m] : 0.0;
+
+
+
+			/*DFEVar doUp 	= (input_activation_net[m] >= 2.5);
+			DFEVar doDown 	= (input_activation_net[m] <= -2.5);
+			activation_output[m]	<==	doUp 	? 1.0 :
+										doDown	? 0.0 :
+				(		1/2 +
+						((input_activation_net[m]))/4
+						- ((input_activation_net[m]))*((input_activation_net[m]))*((input_activation_net[m]))/48
+						+ ((input_activation_net[m]))*((input_activation_net[m]))*((input_activation_net[m])*((input_activation_net[m]))*((input_activation_net[m]))/480)
+						);
+
+			*/
+
+
+
+
+
+
+			//debug.dfePrintf("exp_arg=%f", exp_arg);
+			//debug.dfePrintf("exp_res=%f", exp_res);
+/*
+			DFEVar upper = dfeFloat(exponent, significand).newInstance(this);
+			DFEVar lower = dfeFloat(exponent, significand).newInstance(this);
+			upper	=	(input_activation_net[m] - constant.var(dfeFloat(exponent, significand), 2.0)).cast(dfeFloat(exponent, significand));
+			lower	=	(input_activation_net[m] + constant.var(dfeFloat(exponent, significand), 2.0)).cast(dfeFloat(exponent, significand));
+			//DFEVar upper	=	(input_activation_net[m] - 2.0);
+			//DFEVar lower	=	(input_activation_net[m] + 2.0);
+
+//			upper.simWatch("upper");
+//			lower.simWatch("lower");
+
+
+
+			//activation_output[m]	<==	(1/2 + ((input_activation_net[m]))/4 - ((input_activation_net[m]))*((input_activation_net[m]))*((input_activation_net[m]))/48);;
+
+			debug.simPrintf(lower < 0, "debug_Under -2 !!! activation_output[%d]=%f     	(input_activation_net[%d]=%f )\n", m, activation_output[m], m, input_activation_net[m]);
+			debug.simPrintf(upper > 0, "debug_Over 2 !!! activation_output[%d]=%f     	(input_activation_net[%d]=%f )\n", m, activation_output[m], m, input_activation_net[m]);
+
+*/
+
+/*			if (FloatingPoint.getSignBit(lower.).equals(1)){ 	 	// x < -2
+			//if (FloatingPoint.getSignBit(lower).cast(dfeUInt(1)).equals(1)){ 	 	// x < -2
+			//if (lower < 0.0 != null){ 	 	// x < -2
+				activation_output[m] <== constant.var(dfeFloat(exponent, significand), 0.0);
+				debug.simPrintf("___Under -2 !!! activation_output[%d]=%f       (input_activation_net[%d]=%f )\n", m, activation_output[m], m, input_activation_net[m]);
+			}else if (FloatingPoint.getSignBit(upper).cast(dfeUInt(1)).equals(0)){	// 2 < x
+			//}else if (upper > 0.0 != null){	// 2 < x
+				activation_output[m] <== constant.var(dfeFloat(exponent, significand), 1.0);
+				debug.simPrintf("___Over 2 !!! activation_output[%d]=%f       (input_activation_net[%d]=%f )\n", m, activation_output[m], m, input_activation_net[m]);
+			}else{// -2 < x < 2
+				activation_output[m]	<==	(1/2 + ((input_activation_net[m]))/4 - ((input_activation_net[m]))*((input_activation_net[m]))*((input_activation_net[m]))/48);;
+			}
+
+*/
+//			activation_output[m]	<==	global_header.activation_function(input_activation_net[m]);
+
+
+
+			/*if (activation_output[m].slice(exponent+significand-1).equals(1)){ // if <0
+				activation_output[m] <== constant.var(dfeFloat(exponent, significand), 0.0);
+				debug.simPrintf("UNDER 0 !!! activation_output[%d]=%f\n", m, activation_output[m]);
+			}else if ((activation_output[m]-constant.var(dfeFloat(exponent, significand), 1.0)).slice(exponent+significand-1).equals(0)){ // if >0
+				activation_output[m] <== constant.var(dfeFloat(exponent, significand), 1.0);
+				debug.simPrintf("OVER 1 !!! activation_output[%d]=%f\n", m, activation_output[m]);
+			}*/
+
+
+			if (global_header.en_debug_print) debug.simPrintf("output_net[%d]=%f\n", m, activation_output[m]);
+			//debug.simPrintf("output_net[%d]=%f\n", m, activation_output[m]);
+		}
+		//debug.dfePrintf("output_net[0]=%f", activation_output[0]);
+	}
+
+}

@@ -1,0 +1,81 @@
+/**	==================================	Main Description:
+*	Description:		the Feed Forward Connectivity_Band - creating a fully connected weighed links between 2 conjoined layers
+*	main operation:		out[j] = ((in[1]*w[1,j])+...+(in[N]*w[N,j]))    +   bias[j]
+*						AKA in matrix operations: 		out  =  in * model.weights     +   model.bias
+*	Designed By:		Yogev Dotan, Dor Rosenblum
+*	Revision History:	Date		Ver Num		Change
+*						2.10.2016	0.2			tried to make input_weight as a scalarInput
+*	====================================	*/
+
+// TODO: add bias [1xM] via: input_bias
+
+package dualkernel;
+
+import com.maxeler.maxcompiler.v2.kernelcompiler.Kernel;
+import com.maxeler.maxcompiler.v2.kernelcompiler.KernelParameters;
+import com.maxeler.maxcompiler.v2.kernelcompiler.types.base.DFEVar;
+import com.maxeler.maxcompiler.v2.kernelcompiler.types.composite.DFEVector;
+import com.maxeler.maxcompiler.v2.kernelcompiler.types.composite.DFEVectorType;
+
+class connectivity_band_Kernel extends Kernel {
+	private static int exponent 		= global_header.exponent;
+	private static int significand 		= global_header.significand;
+	connectivity_band_Kernel(KernelParameters parameters,
+			String NAME,	// instance name
+			int N,	// input vector size for this layer
+			int M	// output vector size for this layer
+) {
+		super(parameters);
+
+		// define inputs and outputs type
+		DFEVectorType<DFEVar> 	InputNetsType =
+			new DFEVectorType<DFEVar>(dfeFloat(exponent,significand),		N);
+		DFEVectorType<DFEVar> 	InputWeightType =
+			new DFEVectorType<DFEVar>( dfeFloat(exponent, significand),		N*M);// linearize matrix [NxM]
+
+		DFEVectorType<DFEVar> 	OutputNetsType =
+			new DFEVectorType<DFEVar>( dfeFloat(exponent, significand),		M);
+
+		if (global_header.en_debug_print) debug.simPrintf("======> %s \n" ,NAME);
+		if (global_header.en_debug_print) debug.simPrintf("\n with params:N=%d M=%d \n",  N,M);
+		// define inputs to module:
+		DFEVector<DFEVar> 	input_net		=	io.input("input_net", 		InputNetsType);
+		DFEVector<DFEVar> 	input_weight	=	io.input("input_weight", 	InputWeightType);
+		//DFEVector<DFEVar> 	input_weight		=	io.scalarInput("input_weight", InputWeightType) ;
+
+		DFEVector<DFEVar> 	input_bias		=   io.input("input_bias",  	OutputNetsType);
+		//DFEVector<DFEVar> 	input_bias		=	io.scalarInput("input_bias", OutputNetsType) ;
+
+		DFEVector<DFEVar> 	output_net		=   io.output("output_net",  	OutputNetsType);
+
+		final int PIPELINE_RANK		= (int) Math.ceil(Math.log(N*M)/Math.log(2));
+
+		// loop-unrolling implementation of matrix multiplication:
+
+		DFEVar[] temp = new DFEVar[N*M];
+		for (int j = 0; j < M; ++j) {
+			for (int i = 0; i < N; ++i) {
+				temp[(j*N)+i] =	input_net[i] * input_weight[j+(i*M)];
+				if (global_header.en_debug_print) debug.simPrintf("input_weight[%d,%d]=%f \n",i ,j,input_weight[j+(i*M)]);
+				if (global_header.en_debug_print) if (j==0)	debug.simPrintf("input_net[%d]=%f \n",i,input_net[i]);
+				if (global_header.en_debug_print) if (i==0)	debug.simPrintf("input_bias[%d]=%f \n",j,input_bias[j]);
+			}
+		}
+		// row sum
+		int Size=N;
+		for (int k = PIPELINE_RANK; k >=1; k=k-1) {
+			for(int j = 0 ; j<M ; ++j) {
+				for (int i = 0; i < Size/2; i=i+1) {
+					temp[j*N+i]=temp[2*i+j*N]+temp[2*i+1+j*N];
+				}
+			}
+			Size = Size/2;
+		}
+
+		for(int j = 0 ; j<M ; ++j) {
+			output_net[j] <== temp[j*N]	+ input_bias[j];
+			if (global_header.en_debug_print) debug.simPrintf("output_net[%d]=%f\n", j, output_net[j]);
+		}
+
+	}
+}

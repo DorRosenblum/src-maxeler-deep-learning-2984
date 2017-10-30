@@ -1,0 +1,438 @@
+/**	==================================	Main Description:
+*	Description:		The Manager connectin a fully associative ANN
+*	Designed By:		Yogev Dotan, Dor Rosenblum
+*	Revision History:	Date		Ver Num		Change
+*						2.10.2016	0.2			tried to make input_weight as a scalarInput
+*						16.10.2016	0.3			fixed stream halts in a full ANN verified via Matlab
+*	====================================	*/
+
+package dualkernel;
+
+import com.maxeler.maxcompiler.v2.build.EngineParameters;
+import com.maxeler.maxcompiler.v2.managers.custom.CustomManager;
+import com.maxeler.maxcompiler.v2.managers.custom.DFELink;
+import com.maxeler.maxcompiler.v2.managers.custom.blocks.Fanout;
+import com.maxeler.maxcompiler.v2.managers.custom.blocks.KernelBlock;
+import com.maxeler.maxcompiler.v2.managers.engine_interfaces.CPUTypes;
+import com.maxeler.maxcompiler.v2.managers.engine_interfaces.EngineInterface;
+import com.maxeler.maxcompiler.v2.managers.engine_interfaces.InterfaceParam;
+
+
+
+
+
+
+class DualKernelManager extends CustomManager {
+	private static int HIDDEN_LAYERS_NEURONS	= global_header.HIDDEN_LAYERS_NEURONS;
+	private static int N_INPUTS					= global_header.N_INPUTS;
+	private static int N_OUTPUTS				= global_header.N_OUTPUTS;
+	private static int NUM_OF_HIDDEN_LAYERS		= global_header.NUM_OF_HIDDEN_LAYERS;
+
+	private static int EPOCH_SIZE				= global_header.EPOCH_SIZE;
+
+
+	DualKernelManager(EngineParameters engineParameters) {
+		super(engineParameters);
+
+
+	///////////////////////////////// CREATE KERNELS:
+
+		//creating FF layers
+		KernelBlock[] CB 					= new KernelBlock[NUM_OF_HIDDEN_LAYERS+1] ;
+		KernelBlock[] Activation_Function 	= new KernelBlock[NUM_OF_HIDDEN_LAYERS+1] ;
+
+		for (int i = 0; i <=NUM_OF_HIDDEN_LAYERS ; ++i) {
+			String param1 = "CB_layer_kernel" + i;
+			String param2 = "activation_function_kernel" + i;
+			if (i==0) {								// first layer: Input Layer
+				CB[i]					 	= addKernel(
+						new connectivity_band_Kernel(makeKernelParameters(param1 ),param1, N_INPUTS,HIDDEN_LAYERS_NEURONS));
+				Activation_Function[i] 		= addKernel(
+						new neuron_activation_function(makeKernelParameters(param2), param2, HIDDEN_LAYERS_NEURONS));
+				continue;
+			}
+			else if (i==NUM_OF_HIDDEN_LAYERS) {	// last layer: Output Layer
+				CB[i] 						= addKernel(
+						new connectivity_band_Kernel(makeKernelParameters(param1 ),param1, HIDDEN_LAYERS_NEURONS,N_OUTPUTS));
+				Activation_Function[i] 		= addKernel(
+						new neuron_activation_function(makeKernelParameters(param2),param2,  N_OUTPUTS));
+				continue;
+			}else{									// middle layer: Hidden Layer
+				CB[i] 						= addKernel(
+						new connectivity_band_Kernel(makeKernelParameters(param1 ),param1, HIDDEN_LAYERS_NEURONS,HIDDEN_LAYERS_NEURONS));
+				Activation_Function[i] 		= addKernel(
+						new neuron_activation_function(makeKernelParameters(param2), param2, HIDDEN_LAYERS_NEURONS));
+				continue;
+			}
+		}
+
+		// TODO: soft MAX afer FF !!!
+
+
+		//after Feed Forward , calc FF_net_error for Back Propagation:
+		KernelBlock FF_net_error = addKernel(
+				 new FF_net_error_Kernel(makeKernelParameters("FF_net_error"),"FF_net_error",N_OUTPUTS ));
+
+
+
+		//creating BP Connectivity bands layers
+		KernelBlock[] activation_function_div 	= new KernelBlock[NUM_OF_HIDDEN_LAYERS+1] ;
+		KernelBlock[] BP 						= new KernelBlock[NUM_OF_HIDDEN_LAYERS+1] ;
+		KernelBlock[] BP_CB 					= new KernelBlock[NUM_OF_HIDDEN_LAYERS+1] ;
+		for (int i = 0; i <=NUM_OF_HIDDEN_LAYERS ; ++i) {
+			String param0 	= "activationfunction_div_kernel" + i;
+			String param1 	= "BP_CB_kernel" + i;
+			String param2 	= "BP_kernel" + i;
+			if (i==0) {							// relative to last CB layer
+				activation_function_div[i] 	= addKernel(
+						new neuron_activation_function_div(makeKernelParameters(param0),param0, N_OUTPUTS));
+				BP[i] 						= addKernel(
+						new Back_propagation_kernel(makeKernelParameters(param2 ),param2, N_OUTPUTS));
+				BP_CB[i] 					= addKernel(
+						new BP_connectivity_band_Kernel(makeKernelParameters(param1 ), param1,EPOCH_SIZE,N_OUTPUTS,HIDDEN_LAYERS_NEURONS));
+				continue;
+			}
+			else if (i==NUM_OF_HIDDEN_LAYERS) {	// relative to firt CB layer
+				activation_function_div[i] 	= addKernel(
+						new neuron_activation_function_div(makeKernelParameters(param0),param0, HIDDEN_LAYERS_NEURONS));
+				BP[i] 						= addKernel(
+						new Back_propagation_kernel(makeKernelParameters(param2 ),param2, HIDDEN_LAYERS_NEURONS));
+				BP_CB[i] 					= addKernel(
+						new BP_connectivity_band_Kernel(makeKernelParameters(param1 ),param1,EPOCH_SIZE, HIDDEN_LAYERS_NEURONS,N_INPUTS));
+				continue;
+			}
+			else {								// relative to middle CB layers
+				activation_function_div[i] 	= addKernel(
+						new neuron_activation_function_div(makeKernelParameters(param0),param0, HIDDEN_LAYERS_NEURONS));
+				BP[i] 						= addKernel(
+						new Back_propagation_kernel(makeKernelParameters(param2 ),param2, HIDDEN_LAYERS_NEURONS));
+				BP_CB[i] 					= addKernel(
+						new BP_connectivity_band_Kernel(makeKernelParameters(param1 ),param1,EPOCH_SIZE, HIDDEN_LAYERS_NEURONS,HIDDEN_LAYERS_NEURONS));
+				continue;
+			}
+		}
+
+
+
+	// create Fanout copies of link wires:
+		//creating weight port & fan outs & routing.
+		KernelBlock[] dup_weights_kernel 	= new KernelBlock[NUM_OF_HIDDEN_LAYERS+1] ;
+		KernelBlock[] dup_bias_kernel		= new KernelBlock[NUM_OF_HIDDEN_LAYERS+1] ;
+
+		DFELink[] 	input_weight_from_cpu 	= new DFELink[NUM_OF_HIDDEN_LAYERS+1];
+		DFELink[] 	input_bias_from_cpu 	= new DFELink[NUM_OF_HIDDEN_LAYERS+1];
+		Fanout[] 	weight_fan 				= new Fanout[NUM_OF_HIDDEN_LAYERS+1];
+		for (int i = 0; i <=NUM_OF_HIDDEN_LAYERS ; ++i) {
+			String Dupbias_string 			= 	"Dupbias" + i;
+			String Dupweight_string 		= 	"Dupweight" + i;
+
+			String bias_string 			= 	"bias" + i;
+			String weight_string 		= 	"weight" + i;
+			String tmp_fan_string 		= 	"weight_fan" + i;
+			input_weight_from_cpu[i] 	= 	addStreamFromCPU(weight_string);
+			input_bias_from_cpu[i]		=	addStreamFromCPU(bias_string);
+
+			if (i == 0){
+				dup_weights_kernel[i] 		= addKernel(
+						new vector_dup_Kernel(makeKernelParameters(Dupweight_string ),Dupweight_string, EPOCH_SIZE, N_INPUTS*HIDDEN_LAYERS_NEURONS));
+				dup_bias_kernel[i] 			= addKernel(
+						new vector_dup_Kernel(makeKernelParameters(Dupbias_string ),Dupbias_string, EPOCH_SIZE, HIDDEN_LAYERS_NEURONS));
+			}else if (i == NUM_OF_HIDDEN_LAYERS){
+				dup_weights_kernel[i] 		= addKernel(
+						new vector_dup_Kernel(makeKernelParameters(Dupweight_string ),Dupweight_string, EPOCH_SIZE, HIDDEN_LAYERS_NEURONS*N_OUTPUTS));
+				dup_bias_kernel[i] 			= addKernel(
+						new vector_dup_Kernel(makeKernelParameters(Dupbias_string ),Dupbias_string, EPOCH_SIZE, N_OUTPUTS));
+			}else{
+				dup_weights_kernel[i] 		= addKernel(
+						new vector_dup_Kernel(makeKernelParameters(Dupweight_string ),Dupweight_string, EPOCH_SIZE, HIDDEN_LAYERS_NEURONS*HIDDEN_LAYERS_NEURONS));
+				dup_bias_kernel[i] 			= addKernel(
+						new vector_dup_Kernel(makeKernelParameters(Dupbias_string ),Dupbias_string, EPOCH_SIZE, HIDDEN_LAYERS_NEURONS));
+			}
+
+
+			// create fan to split stream to multiple modules
+			weight_fan[i]				=	fanout(tmp_fan_string) ;
+			dup_weights_kernel[i].getInput("input") 	<==	input_weight_from_cpu[i];
+			weight_fan[i].getInput() 					<==	dup_weights_kernel[i].getOutput("dup_output");
+
+			//connecting FF CB from output fan:
+			String 	weight_fan_FF_str 			= 	"fan_weight_FF" + i;
+			DFELink fan_weight_FF 				= 	weight_fan[i].addOutput(weight_fan_FF_str);
+			CB[i].getInput("input_weight") 		<== fan_weight_FF;
+
+			dup_bias_kernel[i].getInput("input") 	<==	input_bias_from_cpu[i];
+			CB[i].getInput("input_bias")			<==	dup_bias_kernel[i].getOutput("dup_output");
+
+			//connecting BP CB from output fan: (mirror image)
+			String 	fan_weight_BP_str 			= 	"fan_weight_BP" + i;
+			DFELink fan_weight_BP 				= 	weight_fan[i].addOutput(fan_weight_BP_str);
+			BP_CB[NUM_OF_HIDDEN_LAYERS- i].getInput("input_weight") 	<== fan_weight_BP;
+		}
+
+		//creating neuron_activation output fan
+		Fanout[] 	neuron_output_fan 			= new Fanout [NUM_OF_HIDDEN_LAYERS+1];
+		DFELink[] 	neuron_output_fan_FF 		= new DFELink[NUM_OF_HIDDEN_LAYERS+1];
+		DFELink[] 	neuron_output_fan_BP_Div 	= new DFELink[NUM_OF_HIDDEN_LAYERS+1];
+		DFELink[] 	neuron_output_fan_BP_CB 	= new DFELink[NUM_OF_HIDDEN_LAYERS+1];
+		for (int i = 0; i < NUM_OF_HIDDEN_LAYERS+1 ; ++i) {
+			String tmp_fan_string 					= 	"neuron_output_fan" + i;
+			neuron_output_fan[i]					=	fanout(tmp_fan_string);
+
+			String neuron_output_FF_string 			= 	"neuron_output_fan_FF" + i;
+			String neuron_output_BP_Div_string 		= 	"neuron_output_fan_BP_Div" + i;
+			String neuron_output_BP_CB_string 		= 	"neuron_output_fan_BP_CB" + i;
+
+			neuron_output_fan_FF[i] 				= neuron_output_fan[i].addOutput(neuron_output_FF_string);
+			neuron_output_fan_BP_Div[i] 			= neuron_output_fan[i].addOutput(neuron_output_BP_Div_string);
+			neuron_output_fan_BP_CB[i] 				= neuron_output_fan[i].addOutput(neuron_output_BP_CB_string);
+		}
+
+
+		// add Inputs from CPU for FF:
+		//add streams
+		DFELink data_into_ann 			= addStreamFromCPU("data_into_ann");
+		Fanout data_into_ann_fan		=	fanout("data_into_ann_fan") ;
+		data_into_ann_fan.getInput() 	<==	data_into_ann;
+
+		DFELink data_into_ann_fan_FF 	= 	data_into_ann_fan.addOutput("data_into_ann_fan_FF");
+		DFELink data_into_ann_fan_BP 	= 	data_into_ann_fan.addOutput("data_into_ann_fan_BP");
+
+		//-----------
+		DFELink expected_result_of_ann 	= addStreamFromCPU("expected_result_of_ann");
+
+		//connecting  FF kernels
+		CB[0].getInput("input_net") 	<== data_into_ann_fan_FF;
+
+		for (int i = 0; i <= NUM_OF_HIDDEN_LAYERS; ++i) {
+			if (NUM_OF_HIDDEN_LAYERS==0){
+				/***/
+				continue;
+			}else{
+				Activation_Function[i].getInput("input_activation_net") <== CB[i].getOutput("output_net");
+
+				neuron_output_fan[i].getInput() 						<== Activation_Function[i].getOutput("activation_output");
+
+				if (i==NUM_OF_HIDDEN_LAYERS)	{// last
+					FF_net_error.getInput("NN_outputs") 				<== neuron_output_fan_BP_CB[i];
+					continue;
+				}
+				else{
+					CB[i+1].getInput("input_net") 						<== neuron_output_fan_FF[i];
+					continue;
+				}
+			}
+		}
+
+		//after Feed Forward , calc FF_net_error before Back Propagation:
+		FF_net_error.getInput("expected_output") 	<== expected_result_of_ann;
+
+
+
+		//connecting BP kernels
+		for (int i = 0; i <=NUM_OF_HIDDEN_LAYERS ; ++i) {
+			if (i == 0 )	{
+				BP[i].getInput("run_error_in") 								<== FF_net_error.getOutput("relative_error_out");
+
+				activation_function_div[i].getInput("input_activation_net")	<== neuron_output_fan_BP_Div[NUM_OF_HIDDEN_LAYERS];
+
+				BP[i].getInput("derivative_in")								<== activation_function_div[i].getOutput("activation_output");
+
+				BP_CB[i].getInput("input_errors")							<== BP[i].getOutput("error_out");
+
+				BP_CB[i].getInput("input_activations")						<== neuron_output_fan_BP_CB[NUM_OF_HIDDEN_LAYERS-i-1];
+				continue;
+			}
+			else if (i==NUM_OF_HIDDEN_LAYERS) {
+				BP[i].getInput("run_error_in") 								<== BP_CB[i-1].getOutput("output_run_error");
+
+				activation_function_div[i].getInput("input_activation_net")	<== neuron_output_fan_BP_Div[NUM_OF_HIDDEN_LAYERS-i];
+
+				BP[i].getInput("derivative_in")								<== activation_function_div[i].getOutput("activation_output");
+
+				BP_CB[i].getInput("input_errors")							<== BP[i].getOutput("error_out");
+
+				BP_CB[i].getInput("input_activations")						<== data_into_ann_fan_BP;
+
+				continue;
+			}
+			else {
+				BP[i].getInput("run_error_in") 								<== BP_CB[i-1].getOutput("output_run_error");
+
+				activation_function_div[i].getInput("input_activation_net")	<== neuron_output_fan_BP_Div[NUM_OF_HIDDEN_LAYERS-i];
+
+				BP[i].getInput("derivative_in")								<== activation_function_div[i].getOutput("activation_output");
+
+				BP_CB[i].getInput("input_errors")							<== BP[i].getOutput("error_out");
+
+				BP_CB[i].getInput("input_activations")						<== neuron_output_fan_BP_CB[NUM_OF_HIDDEN_LAYERS-i-1];
+				continue;
+			}
+		}
+
+
+		DFELink last_BPCB_out 				= addStreamToCPU("last_BPCB_out");
+		DFELink ann_out		= addStreamToCPU("ann_out");
+
+		last_BPCB_out 						<== BP_CB[NUM_OF_HIDDEN_LAYERS].getOutput("output_run_error");
+		ann_out		<==	neuron_output_fan_FF[NUM_OF_HIDDEN_LAYERS+1-1];
+		//need to run simulation and test graph!!!!!
+
+		//connecting weight and bias correction from BP_CB:
+		DFELink[] weight_correction_vector 	= new DFELink[NUM_OF_HIDDEN_LAYERS+1];
+		DFELink[] bias_correction_vector	= new DFELink[NUM_OF_HIDDEN_LAYERS+1];
+		for (int i = 0 ; i <= NUM_OF_HIDDEN_LAYERS; ++i) {
+			String weight_correction_string 	= 	"weight_correction" + i;
+			weight_correction_vector[i] 		= 	addStreamToCPU(weight_correction_string);
+			weight_correction_vector[i]			<==	BP_CB[NUM_OF_HIDDEN_LAYERS-i].getOutput("batch_sum_weights_delta");
+
+			String bias_correction_string 		= 	"bias_correction" + i;
+			bias_correction_vector[i] 			= 	addStreamToCPU(bias_correction_string);
+			bias_correction_vector[i]			<==	BP_CB[NUM_OF_HIDDEN_LAYERS-i].getOutput("batch_sum_biases_delta");
+		}
+	}
+
+
+
+
+///////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+
+
+	static EngineInterface interfaceDefault() {
+		EngineInterface ei = new EngineInterface();
+
+
+
+		InterfaceParam NumOfEpochs 			= ei.addParam("NumOfEpochs", CPUTypes.INT);
+			InterfaceParam NumOfEpochsInBytes 	= NumOfEpochs * global_header.NetType_Byte_Size;
+
+
+		// streams size:
+			// inputs to ANN:
+			ei.setStream("data_into_ann", 			CPUTypes.FLOAT, N_INPUTS									*NumOfEpochsInBytes*EPOCH_SIZE);
+			ei.setStream("expected_result_of_ann", 	CPUTypes.FLOAT, N_OUTPUTS									*NumOfEpochsInBytes*EPOCH_SIZE);
+
+			// input weights & bias
+			for (int i = 0; i <=NUM_OF_HIDDEN_LAYERS ; ++i) {
+				String bias_string 					= 	"bias" 				+ i;
+				String weight_string 				= 	"weight" 			+ i;
+				if (i == 0){// first
+					ei.setStream(weight_string, CPUTypes.FLOAT, 	N_INPUTS*HIDDEN_LAYERS_NEURONS				*NumOfEpochsInBytes);
+					ei.setStream(bias_string, 	CPUTypes.FLOAT, 	HIDDEN_LAYERS_NEURONS						*NumOfEpochsInBytes);
+				}else if (i == NUM_OF_HIDDEN_LAYERS){ // last
+					ei.setStream(weight_string, CPUTypes.FLOAT, 	HIDDEN_LAYERS_NEURONS*N_OUTPUTS				*NumOfEpochsInBytes);
+					ei.setStream(bias_string, 	CPUTypes.FLOAT, 	N_OUTPUTS									*NumOfEpochsInBytes);
+				}else{
+					ei.setStream(weight_string, CPUTypes.FLOAT, 	HIDDEN_LAYERS_NEURONS*HIDDEN_LAYERS_NEURONS	*NumOfEpochsInBytes);
+					ei.setStream(bias_string, 	CPUTypes.FLOAT, 	HIDDEN_LAYERS_NEURONS						*NumOfEpochsInBytes);
+				}
+			}
+
+			// output corrected weights & bias
+			for (int i = 0; i <=NUM_OF_HIDDEN_LAYERS ; ++i) {
+				String weight_correction_string 	= 	"weight_correction" + i;
+				String bias_correction_string 		= 	"bias_correction" 	+ i;
+				if (i == NUM_OF_HIDDEN_LAYERS){	// last
+					ei.setStream(weight_correction_string, 	CPUTypes.FLOAT, 	HIDDEN_LAYERS_NEURONS*N_OUTPUTS				*NumOfEpochsInBytes);
+					ei.setStream(bias_correction_string, 	CPUTypes.FLOAT, 	N_OUTPUTS									*NumOfEpochsInBytes);
+				}else if (i == 0){ 				// first
+					ei.setStream(weight_correction_string, 	CPUTypes.FLOAT, 	N_INPUTS*HIDDEN_LAYERS_NEURONS				*NumOfEpochsInBytes);
+					ei.setStream(bias_correction_string, 	CPUTypes.FLOAT, 	HIDDEN_LAYERS_NEURONS						*NumOfEpochsInBytes);
+				}else{
+					ei.setStream(weight_correction_string, 	CPUTypes.FLOAT, 	HIDDEN_LAYERS_NEURONS*HIDDEN_LAYERS_NEURONS	*NumOfEpochsInBytes);
+					ei.setStream(bias_correction_string, 	CPUTypes.FLOAT, 	HIDDEN_LAYERS_NEURONS						*NumOfEpochsInBytes);
+				}
+			}
+
+
+
+			// outputs of ANN to prevent prune
+
+			//ei.setStream("last_BPCB_out", 						CPUTypes.FLOAT, N_INPUTS									*NumOfEpochsInBytes*EPOCH_SIZE);
+			ei.ignoreStream("last_BPCB_out");
+
+			ei.setStream("ann_out", 					CPUTypes.FLOAT, N_OUTPUTS									*NumOfEpochsInBytes*EPOCH_SIZE);
+
+
+
+
+
+
+
+		// internal ticks
+			ei.setTicks("FF_net_error",								EPOCH_SIZE*NumOfEpochs);
+
+			// BP_CB
+			for (int i = 0; i <=NUM_OF_HIDDEN_LAYERS ; ++i) {
+				String CB_layer_kernel_string  				= "CB_layer_kernel" 				+ i;
+				String activation_function_kernel_string 	= "activation_function_kernel" 		+ i;
+
+				String activationfunction_div_kernel_string	= "activationfunction_div_kernel" 	+ i;
+				String BP_kernel_string					 	= "BP_kernel" 						+ i;
+
+
+				String Dupbias_string 			= 	"Dupbias" + i;
+				String Dupweight_string 		= 	"Dupweight" + i;
+
+
+				ei.setTicks(CB_layer_kernel_string, 				EPOCH_SIZE*NumOfEpochs);
+				ei.setTicks(activation_function_kernel_string,		EPOCH_SIZE*NumOfEpochs);
+				ei.setTicks(activationfunction_div_kernel_string,	EPOCH_SIZE*NumOfEpochs);
+				ei.setTicks(BP_kernel_string,						EPOCH_SIZE*NumOfEpochs);
+
+				ei.setTicks(Dupweight_string,						EPOCH_SIZE*NumOfEpochs);
+				ei.setTicks(Dupbias_string,							EPOCH_SIZE*NumOfEpochs);
+
+			}
+
+
+			// BP_CB : ticks depend on LOOP
+			for (int i = 0; i <=NUM_OF_HIDDEN_LAYERS ; ++i) {
+				String BP_CB_string 	= "BP_CB_kernel" + i;
+
+				InterfaceParam biases_delta_loopLength 		= ei.getAutoLoopOffset(BP_CB_string, "biases_delta_loopLength");
+				ei.ignoreAutoLoopOffset(BP_CB_string, "biases_delta_loopLength");
+				InterfaceParam weights_delta_loopLength 		= ei.getAutoLoopOffset(BP_CB_string, "weights_delta_loopLength");
+				ei.ignoreAutoLoopOffset(BP_CB_string, "weights_delta_loopLength");
+
+					InterfaceParam max_loopLength 		= (biases_delta_loopLength > weights_delta_loopLength)? biases_delta_loopLength : weights_delta_loopLength;
+
+				ei.setTicks(BP_CB_string, EPOCH_SIZE*NumOfEpochs * max_loopLength);
+
+			}
+
+
+
+
+//			ei.ignoreAll(Direction.IN);
+//			ei.ignoreAll(Direction.OUT);
+
+		return ei;
+	}
+
+	public static void main(String[] args) {
+		EngineParameters params 	= new EngineParameters(args);
+		DualKernelManager manager 	= new DualKernelManager(params);
+
+		manager.config.setAllowNonMultipleTransitions(true);
+		manager.createSLiCinterface(interfaceDefault());
+
+		manager.addMaxFileConstant("EPOCH_SIZE", 			EPOCH_SIZE);
+		manager.addMaxFileConstant("N_INPUTS", 				N_INPUTS);
+		manager.addMaxFileConstant("N_OUTPUTS", 			N_OUTPUTS);
+		manager.addMaxFileConstant("HIDDEN_LAYERS_NEURONS", HIDDEN_LAYERS_NEURONS);
+		manager.addMaxFileConstant("NUM_OF_HIDDEN_LAYERS", 	NUM_OF_HIDDEN_LAYERS);
+
+		manager.build();
+
+	}
+	/*-------------------------------------------------------
+	 * TO DO:
+	 * Make input and output connectivity bands inside the creation loop + weights
+	 * Add BP Weight out to memory
+	 * Set last BP with proper input size.
+	 * Compile simulation and check code.
+	 ----------------------------------------------------*/
+}

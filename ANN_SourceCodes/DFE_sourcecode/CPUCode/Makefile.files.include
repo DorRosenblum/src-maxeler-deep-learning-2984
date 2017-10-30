@@ -1,0 +1,5 @@
+#
+# This file is managed by MaxIDE. Do NOT change.
+#
+HEADERS:= Header.h dataEntry.h dataReader.h neuralNetwork.h neuralNetworkTrainer.h 
+SOURCES:= DualKernelCpuCode.cpp dataReader.cpp neuralNetwork.cpp neuralNetworkTrainer.cpp 

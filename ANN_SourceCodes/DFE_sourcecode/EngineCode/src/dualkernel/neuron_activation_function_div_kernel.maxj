@@ -1,0 +1,52 @@
+/**	==================================	Main Description:
+*	Description:		this module calculates the dout/dnet of the neuron activation function derivative
+*	Designed By:		Yogev Dotan, Dor Rosenblum
+*	Revision History:	Date		Ver Num		Change
+*	====================================	*/
+
+package dualkernel;
+
+
+
+import com.maxeler.maxcompiler.v2.kernelcompiler.Kernel;
+import com.maxeler.maxcompiler.v2.kernelcompiler.KernelParameters;
+import com.maxeler.maxcompiler.v2.kernelcompiler.types.base.DFEVar;
+import com.maxeler.maxcompiler.v2.kernelcompiler.types.composite.DFEVector;
+import com.maxeler.maxcompiler.v2.kernelcompiler.types.composite.DFEVectorType;
+
+ class neuron_activation_function_div extends Kernel {
+		private static int exponent 	= global_header.exponent;
+		private static int significand 	= global_header.significand;
+	neuron_activation_function_div(KernelParameters parameters,
+		String	NAME,	// instance name
+		int 	M		// M is the number of neurons in the layer
+		) {
+
+		super(parameters);
+		if (global_header.en_debug_print) debug.simPrintf("======> %s \n" ,NAME);
+		if (global_header.en_debug_print) debug.simPrintf("\n with params: M=%d \n",  M);
+
+		DFEVectorType<DFEVar> 	InputNetsType =
+			new DFEVectorType<DFEVar>( dfeFloat(exponent, significand),		M);
+		DFEVectorType<DFEVar> 	activation_outputNetsType =
+			new DFEVectorType<DFEVar>( dfeFloat(exponent, significand),		M);
+
+		// define activation_outputs to module:
+		DFEVector<DFEVar> 	input_activation_net		=	io.input("input_activation_net", 		InputNetsType);
+		// activation_output
+		DFEVector<DFEVar> 	activation_output			=	io.output("activation_output", activation_outputNetsType);
+
+
+		for (int m=0; m<M; m++) {
+			// Input
+			//DFEVar isPose 	= (input_activation_net[m] > 0);
+			//activation_output[m]	<==	isPose 	? 1.0 : input_activation_net[m];
+
+
+			activation_output[m]	<==	global_header.activation_function_div(input_activation_net[m]);
+			if (global_header.en_debug_print) debug.simPrintf("neuron_activation_function_div[%d]= %f			\t\t from input_activation_net[%d]=%f\n" ,m, activation_output[m], m, input_activation_net[m]);
+
+		}
+	}
+
+}

@@ -1,0 +1,48 @@
+/**	==================================	Main Description:
+*	Description:		The calculation of Back Propagation per weight matrix between 2 layers.
+*						the module will output: Error = derror/dweight[1XM]
+*	Designed By:		Yogev Dotan, Dor Rosenblum
+*	Revision History:	Date		Ver Num		Change
+*	====================================	*/
+
+package dualkernel;
+
+import com.maxeler.maxcompiler.v2.kernelcompiler.Kernel;
+import com.maxeler.maxcompiler.v2.kernelcompiler.KernelParameters;
+import com.maxeler.maxcompiler.v2.kernelcompiler.types.base.DFEVar;
+import com.maxeler.maxcompiler.v2.kernelcompiler.types.composite.DFEVector;
+import com.maxeler.maxcompiler.v2.kernelcompiler.types.composite.DFEVectorType;
+
+class Back_propagation_kernel extends Kernel {
+	private static int exponent 		= global_header.exponent;
+	private static int significand 		= global_header.significand;
+	Back_propagation_kernel(KernelParameters parameters,
+			String 	NAME,	// instance name
+			int 	M		// output and input vector size for this layer
+) {
+		super(parameters);
+
+		if (global_header.en_debug_print) debug.simPrintf("======> %s \n" ,NAME);
+		if (global_header.en_debug_print) debug.simPrintf("\n with params:M=%d \n",  M);
+
+
+		// define layer type:
+		DFEVectorType<DFEVar> 	LayersNetsType =
+			new DFEVectorType<DFEVar>( dfeFloat(exponent, significand),		M);
+
+		DFEVector<DFEVar> 	run_error_in		=	io.input("run_error_in", 		LayersNetsType);
+		DFEVector<DFEVar> 	derivative_in		=	io.input("derivative_in", 		LayersNetsType);// dout/dnet
+
+		// define outputs to module:
+		DFEVector<DFEVar> 	error_out			=	io.output("error_out", 			LayersNetsType);
+
+		//relative error to PC host
+		//error_out <== (run_error_in * derivative_in); //out[j] = errors[j] = derror/dweight = dout/dnet  .* run_error
+		for (int m=0; m<M; m++) {
+			error_out[m]	<==	run_error_in[m]*derivative_in[m];
+			if (global_header.en_debug_print) debug.simPrintf("error_out[%d]= %f	= %f * %f \n" ,m, error_out[m], run_error_in[m], derivative_in[m]);
+
+		}
+
+	}
+}

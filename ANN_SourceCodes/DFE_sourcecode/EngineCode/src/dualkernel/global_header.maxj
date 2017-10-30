@@ -1,0 +1,48 @@
+/**	==================================	Main Description:
+*	Description:		the global parameters for all srs codes for our ANN implementation in the maxeler
+*	Designed By:		Yogev Dotan, Dor Rosenblum
+*	Revision History:	Date		Ver Num		Change
+*	====================================	*/
+
+package dualkernel;
+
+import com.maxeler.maxcompiler.v2.kernelcompiler.types.base.DFEVar;
+
+
+
+public class global_header{
+
+			static int 		HIDDEN_LAYERS_NEURONS	=	8;	// number of neurons in a single Hidden Layer
+			static int 		N_INPUTS 				= 	2;	// number of neurons in the Input Layer
+			static int 		N_OUTPUTS 				=	4;  // number of neurons in the Output Layer
+			static int 		NUM_OF_HIDDEN_LAYERS 	=	1; 	// total number of fully connected Hidden Layer
+
+			static int 		exponent 				=   8;	//11;//8;	// neuron type float bit representation
+			static int 		significand				=	24;	//52;//24;	// neuron type float bit representation
+
+			static int 		NetType_Byte_Size 		=	((exponent+significand)/8);
+
+			static int 		EPOCH_SIZE				=	128;
+
+
+
+			static Boolean 	en_debug_print		=	false;
+
+			// internal Neuron activation function code:
+			public static DFEVar activation_function(DFEVar input_net) {
+				//return	((1)/(1+KernelMath.exp(-input_net)));
+				//return	KernelMath.exp(input_net)/(KernelMath.exp(input_net) + 1);
+				//return	(1- 1/(1+KernelMath.exp(input_net)));
+
+
+				return	(1/2 + (input_net)/4 - (input_net)*(input_net)*(input_net)/48);
+				//return	((input_net)/(1+KernelMath.abs(input_net)));
+
+
+			}
+			public static DFEVar activation_function_div(DFEVar input_net) {
+				return	input_net*(1-input_net);
+			}
+
+}
+

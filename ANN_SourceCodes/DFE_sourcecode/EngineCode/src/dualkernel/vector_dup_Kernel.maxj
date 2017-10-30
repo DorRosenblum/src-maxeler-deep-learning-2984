@@ -1,0 +1,53 @@
+/**	==================================	Main Description:
+*	Description:		This module duplicates a single input vector to output.
+*	Designed By:		Yogev Dotan, Dor Rosenblum
+*	Revision History:	Date			Ver Num		Change
+*						17/10/2016		0.1			creation
+*	====================================	*/
+
+package dualkernel;
+
+import com.maxeler.maxcompiler.v2.kernelcompiler.Kernel;
+import com.maxeler.maxcompiler.v2.kernelcompiler.KernelParameters;
+import com.maxeler.maxcompiler.v2.kernelcompiler.stdlib.core.Count;
+import com.maxeler.maxcompiler.v2.kernelcompiler.stdlib.core.Count.Counter;
+import com.maxeler.maxcompiler.v2.kernelcompiler.types.base.DFEVar;
+import com.maxeler.maxcompiler.v2.kernelcompiler.types.composite.DFEVector;
+import com.maxeler.maxcompiler.v2.kernelcompiler.types.composite.DFEVectorType;
+
+class vector_dup_Kernel extends Kernel {
+	private static int exponent 		= global_header.exponent;
+	private static int significand 		= global_header.significand;
+	vector_dup_Kernel(KernelParameters parameters,
+			String 	NAME,			// instance name
+			int DUP_TIMES,
+			int VEC_SIZE
+
+) {
+		super(parameters);
+
+		if (global_header.en_debug_print) debug.simPrintf("======> %s \n" ,NAME);
+		if (global_header.en_debug_print) debug.simPrintf("\n with params:VEC_SIZE=%d \n",  VEC_SIZE);
+
+
+		// define layer type:
+		DFEVectorType<DFEVar> 	LayersNetsType =
+			new DFEVectorType<DFEVar>( dfeFloat(exponent, significand),		VEC_SIZE);
+
+
+		// Control Counter
+		Count.Params cnt_params = control.count.makeParams((int) Math.ceil(Math.log(DUP_TIMES)/Math.log(2)))
+		.withMax(DUP_TIMES)
+		.withInitValue(DUP_TIMES)
+		;
+
+		Counter count 				= control.count.makeCounter(cnt_params);
+
+		// Inputs
+		DFEVector<DFEVar>  input 	= io.input("input", LayersNetsType, count.getWrap());
+
+		// Outputs
+		io.output("dup_output", input, LayersNetsType);
+
+	}
+}

@@ -1,0 +1,235 @@
+/**	==================================	Main Description:
+*	Description:		the Back Propagation Connectivity Band - calculationg the error of current weights error,
+*						per Epoch, and summerize for end of epoch batch inorder to update weights.
+*	Designed By:		Yogev Dotan, Dor Rosenblum
+*	Revision History:	Date		Ver Num		Change
+*						2.10.2016	0.2			tried to make input_weight as a scalarInput
+*						7.10.2016	0.3			use ex loop 07: "autorowsum" as a base to unit test and code
+*	====================================	*/
+
+
+// TODO: add bias [1xM] via: input_errors
+
+package dualkernel;
+
+import com.maxeler.maxcompiler.v2.kernelcompiler.Kernel;
+import com.maxeler.maxcompiler.v2.kernelcompiler.KernelParameters;
+import com.maxeler.maxcompiler.v2.kernelcompiler.stdlib.core.CounterChain;
+import com.maxeler.maxcompiler.v2.kernelcompiler.stdlib.core.Stream.OffsetExpr;
+import com.maxeler.maxcompiler.v2.kernelcompiler.types.base.DFEType;
+import com.maxeler.maxcompiler.v2.kernelcompiler.types.base.DFEVar;
+import com.maxeler.maxcompiler.v2.kernelcompiler.types.composite.DFEVector;
+import com.maxeler.maxcompiler.v2.kernelcompiler.types.composite.DFEVectorType;
+
+
+class BP_connectivity_band_Kernel extends Kernel {
+	private static int exponent 		= global_header.exponent;
+	private static int significand 		= global_header.significand;
+
+
+	final DFEType NetType = dfeFloat(exponent, significand);
+
+
+
+	BP_connectivity_band_Kernel(KernelParameters parameters,
+			String NAME,	// instance name
+			int EPOCH_SIZE,
+			int M,			// input vector size for this layer
+			int N			// output vector size for this layer.
+			//  please note that this module gets a mirror image of the net as far as what size is the input and output sizes
+) {
+		super(parameters);
+		if (global_header.en_debug_print) debug.simPrintf("======> %s \n" ,NAME);
+		if (global_header.en_debug_print) debug.simPrintf("\n with params:M=%d N=%d \n",  M,N);
+
+
+
+		DFEVectorType<DFEVar> 	OriginalActivationsInputNetsType =
+			new DFEVectorType<DFEVar>(NetType,		N);
+		DFEVectorType<DFEVar> 	InputWeightType =
+			new DFEVectorType<DFEVar>(NetType,		N*M);// linearize matrix [NxM]
+
+		DFEVectorType<DFEVar> 	InputErrorNetsType =
+			new DFEVectorType<DFEVar>(NetType,		M);
+
+		DFEVectorType<DFEVar> 	RunErrorNetsType =
+			new DFEVectorType<DFEVar>(NetType,		N);
+
+
+
+
+		// Set up counters for Bias loop
+		OffsetExpr 		biases_delta_loopLength 		= stream.makeOffsetAutoLoop("biases_delta_loopLength");
+		DFEVar 			biases_delta_loopLengthVal 		= biases_delta_loopLength.getDFEVar(this, dfeUInt(16));		// 16 bit long
+		CounterChain 	biases_delta_chain 				= control.count.makeCounterChain();
+		DFEVar 			biases_delta_x 					= biases_delta_chain.addCounter(EPOCH_SIZE, 1);
+		DFEVar 			biases_delta_loopCounter 		= biases_delta_chain.addCounter(biases_delta_loopLengthVal, 1);
+
+
+		// Set up counters for Weights loop
+		OffsetExpr 		weights_delta_loopLength 		= stream.makeOffsetAutoLoop("weights_delta_loopLength");
+		DFEVar 			weights_delta_loopLengthVal 	= weights_delta_loopLength.getDFEVar(this, dfeUInt(16));	// 16 bit long
+		CounterChain 	weights_delta_chain 			= control.count.makeCounterChain();
+		DFEVar 			weights_delta_x 				= weights_delta_chain.addCounter(EPOCH_SIZE, 1);
+		DFEVar 			weights_delta_loopCounter 		= weights_delta_chain.addCounter(weights_delta_loopLengthVal, 1);
+
+
+		// Input
+		DFEVector<DFEVar> input_errors 		= 	io.input("input_errors", 		InputErrorNetsType,
+				(biases_delta_loopCounter === (biases_delta_loopLengthVal-1)) &
+				(weights_delta_loopCounter === (weights_delta_loopLengthVal-1)));//biases_delta_loopCounter === (biases_delta_loopLengthVal-1));
+		DFEVector<DFEVar> input_activations	=	io.input("input_activations", 	OriginalActivationsInputNetsType,
+				(biases_delta_loopCounter === (biases_delta_loopLengthVal-1)) &
+				(weights_delta_loopCounter === (weights_delta_loopLengthVal-1)));//biases_delta_loopCounter === (biases_delta_loopLengthVal-1));
+
+		DFEVector<DFEVar> input_weight		=	io.input("input_weight", 		InputWeightType,
+				(biases_delta_loopCounter === (biases_delta_loopLengthVal-1)) &
+				(weights_delta_loopCounter === (weights_delta_loopLengthVal-1)));//biases_delta_loopCounter === (biases_delta_loopLengthVal-1));
+
+		// The loop body itself
+		// At the head of the loop, we select whether to take the initial value,
+		// or the value that is being carried around the loop cycle
+		DFEVector<DFEVar>  biases_delta_sum 			=	InputErrorNetsType.newInstance(this);
+
+		DFEVector<DFEVar>  biases_delta_newSum 			=	InputErrorNetsType.newInstance(this);
+		DFEVector<DFEVar>  biases_delta_newSumOffset 	=	InputErrorNetsType.newInstance(this);
+		DFEVector<DFEVar>  biases_delta_carriedSum 		=	InputErrorNetsType.newInstance(this);
+		for (int i = 0 ; i < M ; ++i){
+			biases_delta_sum[i]				<== (biases_delta_x === 0)? 0.0 : biases_delta_carriedSum[i];
+			biases_delta_newSum[i] 			<== input_errors[i] + biases_delta_sum[i];
+			biases_delta_newSumOffset[i]	<==	stream.offset(biases_delta_newSum[i], -biases_delta_loopLength);
+
+			biases_delta_carriedSum[i]		<== biases_delta_newSumOffset[i];
+		}
+
+
+
+		for (int i = 0 ; i < M ; ++i){// for sim
+			if (global_header.en_debug_print) debug.simPrintf	((biases_delta_x === (EPOCH_SIZE - 1) & biases_delta_loopCounter === (biases_delta_loopLengthVal-1)) &
+									(weights_delta_x === (EPOCH_SIZE - 1) & weights_delta_loopCounter === (weights_delta_loopLengthVal-1))
+						, "biases_delta_sum[%d] = %f \n",i,  biases_delta_newSum[i]);
+		}
+
+
+		// We have a controlled batch_sum_biases_delta to deliver the biases_delta_sum at the end of each row
+		io.output("batch_sum_biases_delta", biases_delta_newSum, InputErrorNetsType,
+				(biases_delta_x === (EPOCH_SIZE - 1) & biases_delta_loopCounter === (biases_delta_loopLengthVal-1)) &
+				(weights_delta_x === (EPOCH_SIZE - 1) & weights_delta_loopCounter === (weights_delta_loopLengthVal-1)));//biases_delta_x === (EPOCH_SIZE - 1) & biases_delta_loopCounter === (biases_delta_loopLengthVal-1));
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+		// -------------------------
+		// AKA in matrix operations: 		run_error = errors * model.weights'
+		DFEVector<DFEVar> 	output_run_error	=   io.output("output_run_error",  	RunErrorNetsType					,
+				(biases_delta_loopCounter === (biases_delta_loopLengthVal-1)) &
+				(weights_delta_loopCounter === (weights_delta_loopLengthVal-1)));//		biases_delta_loopCounter === (biases_delta_loopLengthVal-1));
+
+		final int PIPELINE_RANK		= (int) Math.ceil(Math.log(M*N)/Math.log(2));
+
+		// loop-unrolling implementation of matrix multiplication:
+		DFEVar[] temp = new DFEVar[N*M];
+ 		for (int j = 0; j < N; ++j) {
+			for (int i = 0; i < M; ++i) {
+				temp[(j*M)+i] =	input_errors[i] * input_weight[j*M+i];
+//						debug.simPrintf("input_weight[%d,%d]=%f \n",i ,j,input_weight[j+(i*N)]);
+//						if (j==0)	debug.simPrintf("input_net[%d]=%f \n",i,input_errors[i]);
+			}
+		}
+		// row sum
+		int Size=M;
+		for (int k = PIPELINE_RANK; k >=1; k=k-1) {
+			for(int j = 0 ; j<N ; ++j) {
+				for (int i = 0; i < Size/2; i=i+1) {
+					temp[j*M+i]=temp[2*i+j*M]+temp[2*i+1+j*M];
+				}
+			}
+			Size = Size/2;
+		}
+
+		for(int j = 0 ; j<N ; ++j) {
+			output_run_error[j] <== temp[j*M];
+					/*debug.simPrintf( 	(biases_delta_loopCounter === (biases_delta_loopLengthVal-1)) &
+										(weights_delta_loopCounter === (weights_delta_loopLengthVal-1)),
+							"output_run_error[%d]=%f\n", j, output_run_error[j]);*/
+		}
+
+
+
+
+
+
+
+
+
+
+		// -------------------------
+		// weights_delta[i,j] = (activations[i] * errors[j])
+		// AKA in matrix operations: 		weights_delta = activations'  * errors
+		DFEVar [] weights_delta = new DFEVar[M*N];
+		for (int i = 0; i < N; ++i) {
+			for (int j = 0; j < M; ++j) {
+				weights_delta[(i*M)+j] =	input_activations[i] * input_errors[j];
+//						debug.simPrintf("weights_delta[%d][%d]=%f  = input_activations[%d]*input_errors[%d] \n",i,j,weights_delta[(i*M)+j], i,j);
+			}
+		}
+
+
+		// The loop body itself
+		// At the head of the loop, we select whether to take the initial value,
+		// or the value that is being carried around the loop cycle
+		DFEVector<DFEVar>  weights_delta_sum 				=	InputWeightType.newInstance(this);
+
+		DFEVector<DFEVar>  weights_delta_newSum 			=	InputWeightType.newInstance(this);
+		DFEVector<DFEVar>  weights_delta_newSumOffset 		=	InputWeightType.newInstance(this);
+		DFEVector<DFEVar>  weights_delta_carriedSum 		=	InputWeightType.newInstance(this);
+		for (int i = 0 ; i < M*N ; ++i){
+			weights_delta_sum[i]				<== (weights_delta_x === 0)? 0.0 : weights_delta_carriedSum[i];
+			weights_delta_newSum[i] 			<== weights_delta[i] + weights_delta_sum[i];
+			weights_delta_newSumOffset[i]		<==	stream.offset(weights_delta_newSum[i], -weights_delta_loopLength);
+
+			weights_delta_carriedSum[i]			<== weights_delta_newSumOffset[i];
+		}
+
+		// We have a controlled  to deliver the weights_delta_sum at the end of each row
+		io.output("batch_sum_weights_delta", weights_delta_newSum, InputWeightType,
+				(biases_delta_x === (EPOCH_SIZE - 1) & biases_delta_loopCounter === (biases_delta_loopLengthVal-1)) &
+				(weights_delta_x === (EPOCH_SIZE - 1) & weights_delta_loopCounter === (weights_delta_loopLengthVal-1)));
+
+
+		for (int i = 0; i < N; ++i) {
+			for (int j = 0; j < M; ++j) {
+				if (global_header.en_debug_print) debug.simPrintf((biases_delta_x === (EPOCH_SIZE - 1) & biases_delta_loopCounter === (biases_delta_loopLengthVal-1)) &
+								(weights_delta_x === (EPOCH_SIZE - 1) & weights_delta_loopCounter === (weights_delta_loopLengthVal-1)),
+						"batch_sum_weights_delta[%d][%d]=%f \n",i,j,weights_delta_newSum[(i*M)+j]);
+			}
+		}
+
+
+
+		if (global_header.en_debug_print) weights_delta_newSum.simWatch("weights_delta_newSum");
+		if (global_header.en_debug_print) output_run_error.simWatch("output_run_error");
+		if (global_header.en_debug_print) biases_delta_newSum.simWatch("biases_delta_newSum");
+		if (global_header.en_debug_print) input_errors.simWatch("input_errors");
+
+
+	}
+}
